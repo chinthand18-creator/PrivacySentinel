@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# PyInstaller output (attach the .exe to a GitHub Release instead)
+build/
+dist/
+*.spec
+
+# Generated per-machine by host/install_host.py - contain local paths
+host/host_launcher.bat
+host/host_launcher.sh
+host/com.privacysentinel.host.json
+
+# Never commit keys
+.env
+*.key
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

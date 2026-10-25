@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Privacy Sentinel</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <header>
+    <div class="logo">◈</div>
+    <div>
+      <h1>Privacy Sentinel</h1>
+      <p>AUTOMATIC BROWSER INSPECTION</p>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="current">Current site</button>
+    <button class="tab" data-tab="history">History</button>
+  </nav>
+
+  <main>
+    <div id="view-current">
+      <section class="panel">
+        <span class="eyebrow">CURRENT TAB</span>
+        <h2 id="hostname">Loading…</h2>
+        <p id="url" class="url"></p>
+        <div class="status">
+          <span id="level">Checking…</span>
+          <strong id="score">--</strong>
+        </div>
+        <p id="summary">Waiting for the Python engine.</p>
+      </section>
+
+      <section class="panel">
+        <h3>Findings</h3>
+        <ul id="findings"><li>Waiting for analysis.</li></ul>
+      </section>
+
+      <section class="panel">
+        <h3>Link details</h3>
+        <p class="note" id="details-hint">
+          DNS, certificate, domain registration date and Safe Browsing status
+          for this site.
+        </p>
+        <div id="confirm" hidden>
+          <p class="note warn-text">
+            This sends the site's hostname to your DNS resolver and rdap.org,
+            and the address (without its query string) to Google Safe Browsing
+            if you configured a key. It also connects directly to the site, so
+            the site can see your IP address.
+          </p>
+          <div class="row">
+            <button id="confirm-run">Run checks</button>
+            <button id="confirm-cancel" class="secondary">Cancel</button>
+          </div>
+        </div>
+        <button id="details-btn" class="secondary">Show details (live checks)</button>
+        <div id="details-body"></div>
+      </section>
+
+      <p class="note">Warnings are advisory. Navigation is not blocked. A low score does not guarantee safety.</p>
+      <button id="refresh">Refresh status</button>
+    </div>
+
+    <div id="view-history" hidden>
+      <section class="panel">
+        <input id="filter" type="search" placeholder="Filter by hostname" autocomplete="off">
+        <p id="history-empty" class="note" hidden>No history yet.</p>
+        <ul id="history-list" class="history"></ul>
+      </section>
+      <label class="check">
+        <input type="checkbox" id="history-enabled">
+        Record history (hostnames only, stored on this computer)
+      </label>
+      <button id="clear-history" class="danger">Clear history</button>
+    </div>
+  </main>
+
+  <footer>LOCAL PYTHON ENGINE · PRIVACY FIRST</footer>
+</body>
+</html>

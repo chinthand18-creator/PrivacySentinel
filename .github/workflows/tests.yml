@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run unit tests
+        working-directory: host
+        run: python -m unittest -v
+      - name: Syntax-check the extension
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: |
+          node --check extension/background.js
+          node --check extension/popup.js
+          python -c "import json; json.load(open('extension/manifest.json'))"
