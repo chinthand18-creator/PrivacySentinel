@@ -1,5 +1,8 @@
 "use strict";
 
+// Firefox exposes `browser`; Chromium browsers expose `chrome`. Both are promise-based in MV3.
+const api = typeof browser !== "undefined" ? browser : chrome;
+
 const HOST = "com.privacysentinel.host";
 const lastByTab = new Map();           // tabId -> last URL inspected
 const liveInFlight = new Map();        // tabId -> promise of a running live check
@@ -22,7 +25,7 @@ function isWebUrl(url) {
 // Scan results contain full URLs (possibly with tokens), so keep them in
 // memory-only session storage instead of writing them to disk.
 function saveScan(tabId, scan) {
-  return chrome.storage.session.set({ [scanKey(tabId)]: scan });
+  return api.storage.session.set({ [scanKey(tabId)]: scan });
 }
 
 // History keeps only hostname, protocol, risk level, score and time. Paths and
@@ -31,7 +34,7 @@ let historyQueue = Promise.resolve();
 
 function recordHistory(scan) {
   historyQueue = historyQueue.then(async () => {
-    const data = await chrome.storage.local.get(["settings", "history"]);
+    const data = await api.storage.local.get(["settings", "history"]);
     if (data.settings?.historyEnabled === false) return;
 
     const history = Array.isArray(data.history) ? data.history : [];
@@ -54,26 +57,17 @@ function recordHistory(scan) {
       });
     }
     if (history.length > HISTORY_LIMIT) history.length = HISTORY_LIMIT;
-    await chrome.storage.local.set({ history });
+    await api.storage.local.set({ history });
   }).catch((e) => console.error("[Privacy Sentinel] History error:", e));
   return historyQueue;
 }
 
-function sendToNativeHost(message) {
-  return new Promise((resolve, reject) => {
-    chrome.runtime.sendNativeMessage(HOST, message, (response) => {
-      const error = chrome.runtime.lastError;   // must be read in the callback
-      if (error) {
-        reject(new Error(error.message));
-        return;
-      }
-      if (!response || response.ok !== true || !response.result) {
-        reject(new Error(response?.error || "Invalid response from Python host"));
-        return;
-      }
-      resolve(response.result);
-    });
-  });
+async function sendToNativeHost(message) {
+  const response = await api.runtime.sendNativeMessage(HOST, message);
+  if (!response || response.ok !== true || !response.result) {
+    throw new Error(response?.error || "Invalid response from Python host");
+  }
+  return response.result;
 }
 
 function hintFor(message) {
@@ -96,9 +90,9 @@ function setBadge(tabId, level) {
     UNAVAILABLE: ["x", "#9eafc9"]
   };
   const [text, color] = badges[level] || ["", "#51e3c2"];
-  Promise.resolve(chrome.action.setBadgeText({ tabId, text })).catch(() => {});
+  Promise.resolve(api.action.setBadgeText({ tabId, text })).catch(() => {});
   if (text) {
-    Promise.resolve(chrome.action.setBadgeBackgroundColor({ tabId, color }))
+    Promise.resolve(api.action.setBadgeBackgroundColor({ tabId, color }))
       .catch(() => {});
   }
 }
@@ -133,7 +127,7 @@ async function inspectUrl(url, tabId, { force = false } = {}) {
     };
 
     if (level === "HIGH") {
-      Promise.resolve(chrome.notifications.create({
+      Promise.resolve(api.notifications.create({
         type: "basic",
         iconUrl: "icons/icon128.png",
         title: "Privacy Sentinel warning",
@@ -194,7 +188,7 @@ function runLiveCheck(tabId, url) {
     }
     details.forUrl = url;
     details.checkedAt = new Date().toISOString();
-    await chrome.storage.session.set({ [liveKey(tabId)]: details });
+    await api.storage.session.set({ [liveKey(tabId)]: details });
     return details;
   })().finally(() => liveInFlight.delete(tabId));
 
@@ -203,18 +197,18 @@ function runLiveCheck(tabId, url) {
 }
 
 // Automatic inspection of top-level navigations.
-chrome.webNavigation.onCommitted.addListener((details) => {
+api.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
   inspectUrl(details.url, details.tabId);
 });
 
 // Messages from our own popup.
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id) return;   // ignore anything foreign
+api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.id !== api.runtime.id) return;   // ignore anything foreign
 
   if (msg?.action === "get_scan") {
     const key = scanKey(msg.tabId);
-    chrome.storage.session
+    api.storage.session
       .get(key)
       .then((data) => sendResponse({ scan: data[key] || null }))
       .catch((e) => sendResponse({ scan: null, error: String(e) }));
@@ -230,7 +224,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg?.action === "get_live") {
     const key = liveKey(msg.tabId);
-    chrome.storage.session.get(key).then((data) => {
+    api.storage.session.get(key).then((data) => {
       const stored = data[key];
       sendResponse({
         running: liveInFlight.has(msg.tabId),
@@ -241,7 +235,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg?.action === "get_history") {
-    chrome.storage.local.get(["settings", "history"]).then((data) => {
+    api.storage.local.get(["settings", "history"]).then((data) => {
       sendResponse({
         history: Array.isArray(data.history) ? data.history : [],
         enabled: data.settings?.historyEnabled !== false
@@ -252,15 +246,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   if (msg?.action === "clear_history") {
     historyQueue = historyQueue
-      .then(() => chrome.storage.local.remove("history"))
+      .then(() => api.storage.local.remove("history"))
       .then(() => sendResponse({ ok: true }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
 
   if (msg?.action === "set_history_enabled") {
-    chrome.storage.local.get("settings").then((data) =>
-      chrome.storage.local.set({
+    api.storage.local.get("settings").then((data) =>
+      api.storage.local.set({
         settings: { ...(data.settings || {}), historyEnabled: !!msg.enabled }
       })
     ).then(() => sendResponse({ ok: true }))
@@ -276,13 +270,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => {
+api.tabs.onRemoved.addListener((tabId) => {
   lastByTab.delete(tabId);
-  chrome.storage.session
+  api.storage.session
     .remove([scanKey(tabId), liveKey(tabId)])
     .catch(console.error);
 });
 
-chrome.runtime.onInstalled.addListener(() => {
+api.runtime.onInstalled.addListener(() => {
   console.log("[Privacy Sentinel] Extension installed or reloaded.");
 });

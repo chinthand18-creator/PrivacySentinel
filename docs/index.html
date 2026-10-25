@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Sentinel</title>
+<meta name="description" content="Check a link for common warning signs. Runs in your browser; nothing is uploaded.">
+<style>
+:root{--bg:#0b1120;--card:#141e30;--line:#293750;--text:#eef4ff;--muted:#9eafc9;--teal:#51e3c2;--red:#ff6577;--amber:#ffc66d;--field:#0b1120}
+@media(prefers-color-scheme:light){:root{--bg:#f3f6fb;--card:#fff;--line:#d5deec;--text:#13203a;--muted:#5a6b88;--teal:#0a8f78;--red:#c62839;--amber:#a86a00;--field:#f3f6fb}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:720px;margin:0 auto;padding:20px 16px 40px}h1{margin:8px 0 2px;font-size:26px;color:var(--teal)}
+.sub{color:var(--muted);margin:0 0 18px}section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+h2{margin:0 0 4px;font-size:13px;letter-spacing:1px;color:var(--teal)}p.note{font-size:12px;color:var(--muted);margin:6px 0}
+input[type=text]{width:100%;padding:11px;border-radius:9px;border:1px solid var(--line);background:var(--field);color:var(--text);font:inherit;margin:8px 0}
+button{padding:10px 16px;border:0;border-radius:9px;background:var(--teal);color:#07141b;font:700 14px inherit;cursor:pointer;margin:2px 6px 2px 0}
+button.alt{background:var(--line);color:var(--text)}button:disabled{opacity:.6}
+.level{font-weight:800;font-size:18px}.HIGH,.bad{color:var(--red)}.REVIEW,.warn{color:var(--amber)}.LOW,.ok{color:var(--teal)}.INVALID{color:var(--muted)}
+ul{margin:8px 0 0;padding-left:20px}li{margin:4px 0;overflow-wrap:anywhere}code{overflow-wrap:anywhere;font-size:13px}
+.kv{display:flex;justify-content:space-between;gap:12px;font-size:14px;border-top:1px solid var(--line);padding:5px 0}.kv span:last-child{text-align:right;overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<main>
+<h1>◈ Privacy Sentinel</h1>
+<p class="sub">Check a link for common warning signs. Runs in your browser; nothing is uploaded to any server of ours.</p>
+
+<section>
+<h2>01 / URL CHECK</h2>
+<input id="url" type="text" placeholder="https://example.com" autocomplete="off" spellcheck="false">
+<button id="analyze">Analyze URL</button><button id="live" class="alt">Live checks</button>
+<p class="note" id="livenote" hidden>Live checks send this site's <b>hostname only</b> (no path or query) to Cloudflare DNS (cloudflare-dns.com) and rdap.org. They never contact the site itself. Click again to confirm.</p>
+<div id="result"></div><div id="liveresult"></div>
+</section>
+
+<section>
+<h2>02 / FILE FINGERPRINT (SHA-256)</h2>
+<p class="note">The file is read and hashed inside your browser and is never uploaded.</p>
+<input id="file" type="file">
+<input id="expected" type="text" placeholder="Optional: paste the expected SHA-256 to compare" autocomplete="off" spellcheck="false">
+<div id="hash"></div>
+</section>
+
+<section><h2>NOTES</h2>
+<p class="note">Warnings are advisory. A low score only means no known warning patterns were found, not that a site is safe. The browser version cannot inspect TLS certificates or use Safe Browsing keys; the Chrome extension and desktop app can.
+<a style="color:var(--teal)" href="https://github.com/chinthand18-creator/PrivacySentinel">Source on GitHub</a></p></section>
+</main>
+<script src="engine.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+const kv = (k, v) => { const r = el("div", "kv"); r.append(el("span", null, k), el("span", null, v)); return r; };
+
+function showAnalysis() {
+  const r = SentinelEngine.analyzeUrl($("url").value), box = $("result");
+  box.replaceChildren();
+  const head = el("div", "level " + r.level, r.level === "INVALID" ? "INVALID" : `${r.level} — ${r.score}/100`);
+  const list = el("ul"); r.findings.forEach((f) => list.append(el("li", null, f)));
+  box.append(head, list);
+  if (r.hostname) box.append(kv("Hostname", r.hostname), kv("Protocol", r.scheme.toUpperCase()));
+  $("liveresult").replaceChildren(); resetLive();
+  return r;
+}
+
+let armed = false;
+function resetLive() { armed = false; $("livenote").hidden = true; $("live").textContent = "Live checks"; }
+
+async function getJson(url, headers) {
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
+  try {
+    const res = await fetch(url, { headers, signal: ctl.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.json();
+  } finally { clearTimeout(t); }
+}
+
+async function dns(host) {
+  const out = [];
+  for (const [type, code] of [["A", 1], ["AAAA", 28]]) {
+    const data = await getJson(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=${type}`, { accept: "application/dns-json" });
+    (data.Answer || []).filter((a) => a.type === code).forEach((a) => out.push(a.data));
+  }
+  return out;
+}
+
+async function rdap(host) {
+  const labels = host.split(".");
+  for (let i = 0; i <= labels.length - 2 && i < 3; i++) {       // try parent domains if a subdomain 404s
+    try { return await getJson("https://rdap.org/domain/" + encodeURIComponent(labels.slice(i).join(".")), { accept: "application/rdap+json" }); }
+    catch (e) { if (!/404/.test(e.message)) throw e; }
+  }
+  throw new Error("No registration record found");
+}
+
+async function runLive() {
+  const r = SentinelEngine.analyzeUrl($("url").value), box = $("liveresult");
+  box.replaceChildren();
+  if (r.level === "INVALID") { box.append(el("p", "note", "Enter a valid URL first.")); return; }
+  const host = r.hostname, isIp = /^[\d.]+$/.test(host) || host.startsWith("[");
+  box.append(el("p", "note", "Running live checks…"));
+  const signals = [], rows = [];
+  try {
+    const ips = await dns(host);
+    ips.forEach((ip) => { const pub = SentinelEngine.isPublicIp(ip); rows.push(kv(pub ? "Public IP" : "Non-public IP", ip)); if (!pub) signals.push(["warn", "DNS returned a non-public address."]); });
+    if (!ips.length) rows.push(kv("DNS", "No address records"));
+  } catch (e) { rows.push(kv("DNS", "Unavailable (" + e.message + ")")); }
+  if (!isIp) {
+    try {
+      const d = await rdap(host), ev = {};
+      (d.events || []).forEach((e) => { ev[String(e.eventAction).toLowerCase()] = e.eventDate; });
+      const reg = ev.registration ? new Date(ev.registration) : null;
+      const age = reg && !isNaN(reg) ? Math.floor((Date.now() - reg) / 864e5) : null;
+      if (reg) rows.push(kv("Registered", reg.toLocaleDateString()), kv("Domain age", age + " days"));
+      if (ev.expiration) rows.push(kv("Expires", new Date(ev.expiration).toLocaleDateString()));
+      if (age !== null && age < 30) signals.push(["warn", `The domain was registered only ${age} day(s) ago.`]);
+      else if (age !== null && age < 180) signals.push(["", `The domain is fairly new (${age} days old).`]);
+    } catch (e) { rows.push(kv("Registration", "Unavailable (" + e.message + ")")); }
+  }
+  if (!signals.length) signals.push(["ok", "No warning signs in these checks. This does not prove the site is safe."]);
+  box.replaceChildren();
+  const list = el("ul"); signals.forEach(([c, t]) => list.append(el("li", c, t)));
+  box.append(el("h2", null, "LIVE DETAILS"), list, ...rows);
+}
+
+$("analyze").addEventListener("click", showAnalysis);
+$("url").addEventListener("keydown", (e) => { if (e.key === "Enter") showAnalysis(); });
+$("url").addEventListener("input", resetLive);
+$("live").addEventListener("click", async () => {
+  if (!armed) { armed = true; $("livenote").hidden = false; $("live").textContent = "Confirm and run"; return; }
+  resetLive(); $("live").disabled = true;
+  try { await runLive(); } finally { $("live").disabled = false; }
+});
+
+const MAX_BYTES = 500 * 1024 * 1024;
+async function hashFile() {
+  const box = $("hash"), file = $("file").files[0];
+  box.replaceChildren();
+  if (!file) return;
+  if (file.size > MAX_BYTES) { box.append(el("p", "note warn", "This file is larger than 500 MB. Use the desktop app for big files.")); return; }
+  box.append(el("p", "note", `Hashing ${file.name}…`));
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  const hex = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  box.replaceChildren(el("div", null, file.name), el("code", null, hex));
+  const want = $("expected").value.trim().toLowerCase();
+  if (want) box.append(el("p", want === hex ? "ok" : "bad", want === hex ? "UNCHANGED: matches the expected hash." : "CHANGED: does not match the expected hash."));
+}
+$("file").addEventListener("change", hashFile);
+$("expected").addEventListener("input", hashFile);
+</script>
+</body>
+</html>

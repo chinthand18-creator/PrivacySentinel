@@ -1,5 +1,7 @@
 "use strict";
 
+const api = typeof browser !== "undefined" ? browser : chrome;
+
 const $ = (id) => document.getElementById(id);
 
 const LEVEL_CLASS = {
@@ -19,7 +21,7 @@ function el(tag, className, text) {
 }
 const li = (text, className) => el("li", className, text);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const send = (message) => chrome.runtime.sendMessage(message);
+const send = (message) => api.runtime.sendMessage(message);
 
 let currentTab = null;
 
@@ -36,7 +38,7 @@ document.querySelectorAll(".tab").forEach((button) => {
 
 /* ---------------- current site ---------------- */
 async function activeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await api.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
 

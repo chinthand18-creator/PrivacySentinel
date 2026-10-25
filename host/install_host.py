@@ -4,6 +4,7 @@
 Usage:
     python install_host.py                    # asks for the extension ID
     python install_host.py --id <extension-id> [--browser chrome|edge|chromium|all]
+    python install_host.py --browser firefox       # no ID needed
     python install_host.py --uninstall [--browser ...]
 
 Find the extension ID on chrome://extensions (turn on Developer mode).
@@ -23,21 +24,25 @@ from pathlib import Path
 HOST_NAME = "com.privacysentinel.host"
 HERE = Path(__file__).resolve().parent
 ID_PATTERN = re.compile(r"^[a-p]{32}$")
+GECKO_ID = "privacy-sentinel@chinthand18-creator.github.io"   # must match extension/manifest.json
 
 WIN_KEYS = {
     "chrome": r"Software\Google\Chrome\NativeMessagingHosts",
     "edge": r"Software\Microsoft\Edge\NativeMessagingHosts",
     "chromium": r"Software\Chromium\NativeMessagingHosts",
+    "firefox": r"Software\Mozilla\NativeMessagingHosts",
 }
 MAC_DIRS = {
     "chrome": "Library/Application Support/Google/Chrome/NativeMessagingHosts",
     "edge": "Library/Application Support/Microsoft Edge/NativeMessagingHosts",
     "chromium": "Library/Application Support/Chromium/NativeMessagingHosts",
+    "firefox": "Library/Application Support/Mozilla/NativeMessagingHosts",
 }
 LINUX_DIRS = {
     "chrome": ".config/google-chrome/NativeMessagingHosts",
     "edge": ".config/microsoft-edge/NativeMessagingHosts",
     "chromium": ".config/chromium/NativeMessagingHosts",
+    "firefox": ".mozilla/native-messaging-hosts",
 }
 
 
@@ -57,13 +62,17 @@ def write_launcher() -> Path:
     return launcher
 
 
-def manifest_text(launcher: Path, extension_id: str) -> str:
+def manifest_text(launcher: Path, extension_id: str, browser: str = "chrome") -> str:
+    origin = (
+        {"allowed_extensions": [extension_id]} if browser == "firefox"
+        else {"allowed_origins": [f"chrome-extension://{extension_id}/"]}
+    )
     return json.dumps({
         "name": HOST_NAME,
         "description": "Privacy Sentinel local Python engine",
         "path": str(launcher),
         "type": "stdio",
-        "allowed_origins": [f"chrome-extension://{extension_id}/"],
+        **origin,
     }, indent=2)
 
 
@@ -91,12 +100,12 @@ def self_test(launcher: Path) -> bool:
 
 def install(extension_id: str, browsers: list) -> None:
     launcher = write_launcher()
-    manifest = manifest_text(launcher, extension_id)
-
     for browser in browsers:
+        manifest = manifest_text(
+            launcher, GECKO_ID if browser == "firefox" else extension_id, browser)
         if os.name == "nt":
             import winreg
-            target = HERE / f"{HOST_NAME}.json"
+            target = HERE / f"{HOST_NAME}.{browser}.json"
             target.write_text(manifest, encoding="utf-8")
             with winreg.CreateKey(
                 winreg.HKEY_CURRENT_USER, rf"{WIN_KEYS[browser]}\{HOST_NAME}"
@@ -126,7 +135,7 @@ def uninstall(browsers: list) -> None:
                 print(f"[{browser}] registry key removed")
             except FileNotFoundError:
                 print(f"[{browser}] was not registered")
-            (HERE / f"{HOST_NAME}.json").unlink(missing_ok=True)
+            (HERE / f"{HOST_NAME}.{browser}.json").unlink(missing_ok=True)
         else:
             (manifest_dir(browser) / f"{HOST_NAME}.json").unlink(missing_ok=True)
             print(f"[{browser}] manifest removed")
@@ -137,17 +146,21 @@ def main() -> int:
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("--id", help="extension ID from chrome://extensions")
     parser.add_argument("--browser", default="chrome",
-                        choices=["chrome", "edge", "chromium", "all"])
+                        choices=["chrome", "edge", "chromium", "firefox", "all"])
     parser.add_argument("--uninstall", action="store_true")
     args = parser.parse_args()
-    browsers = list(WIN_KEYS) if args.browser == "all" else [args.browser]
+    # "all" means the Chromium family; Firefox uses a different ID, so ask for it explicitly.
+    browsers = ["chrome", "edge", "chromium"] if args.browser == "all" else [args.browser]
 
     if args.uninstall:
         uninstall(browsers)
         return 0
 
-    extension_id = (args.id or input("Extension ID: ")).strip().lower()
-    if not ID_PATTERN.match(extension_id):
+    if browsers == ["firefox"]:
+        extension_id = GECKO_ID            # fixed ID from the extension manifest
+    else:
+        extension_id = (args.id or input("Extension ID: ")).strip().lower()
+    if browsers != ["firefox"] and not ID_PATTERN.match(extension_id):
         print("That does not look like an extension ID "
               "(32 letters, a-p only).")
         return 1
